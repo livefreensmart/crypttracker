@@ -11,7 +11,12 @@ Goals for hackathon:
     but for quick and dirty calculation of start block we'll use a dandy formula
 2. provide account name and find transfers to other accounts
 3. provide account name and find who transferred to this account name
-3. provide wallet address and find other accounts using it
+4. provide wallet address and find other accounts using it
+
+Roadmap:
+Finish goals 3 and 4
+Consider SteemSQL
+Discord integration
 
 """
 
@@ -75,8 +80,7 @@ def transfersAll(byAccount, hasMemo=True):
         if "Transfer" in eachTransfer:
             if oneTransfer:
                 reformatTransfers.append(oneTransfer)                     
-                ##print(oneTransfer)
-                 
+
             oneTransfer = eachTransfer
         else:
             oneTransfer += " " + eachTransfer
@@ -98,7 +102,7 @@ def transfersExchange(byAccount):
     for eachTransfer in allTransfers:
         if any(exch in eachTransfer for exch in EXCHANGES):
             transferList.append(eachTransfer)
-            #print(eachTransfer)
+            print(eachTransfer)
     
 def transfersNonExchange(byAccount):
     """
@@ -123,7 +127,7 @@ def streamTransfersOut(byAccount, lastDays=7):
     WARNING: May be slow unless you can afford SteemSQL subscription.
 
     :param str byAccount: Steemit account name to investigate
-    :param int lastDays: How far back you want to stream the blockchain
+    :param float lastDays: How far back you want to stream the blockchain
     :return: Merged list of transfer memos (usually wallet addresses) and other accounts using the same memo
     :rtype list
     """
@@ -162,18 +166,20 @@ def calcStartBlock(currentBlock, lastDays):
     Beem has blockchain.get_estimated_block_num that takes datetime parameter. But you need to use beem.utils to properly provide UTC datetime.
 
     :param int currentBlock: Current block number
-    :param int lastDays:
+    :param float lastDays: Allow less than 1 day for hours/minutes
     :return: Calculated start block number
+    :rtype: int
     """
 
-    daysToBlocks = (60*60*24*lastDays)/3
+    daysToBlocks = int(round((60*60*24*lastDays)/3))
+    ## Round result of division and convert to int.
+    ## Original type results in float. Stream requires int type for start and stop blocks.
 
     return currentBlock-daysToBlocks
 
-
 def main():
     try:
-        streamTransfersOut('aurora-ca', lastDays=2)
+        streamTransfersOut('reidlist', lastDays=0.08)
     except Exception as error:
         logger.info("from main")
         logger.info(datetime.datetime.utcnow())
