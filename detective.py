@@ -29,8 +29,11 @@ def cli(ctx, verbose):
 @click.option('--days', '-d', default=0,
               help='Restrict transfers to the last [days] days'
               '(0: no limit, default)')
+@click.option('--include-bots', '-i', default=False, is_flag=True,
+              help='Include transfers to/from known bidbots/services. '
+              'Default: false')
 @click.pass_context
-def transfermatch(ctx, account1, account2, days):
+def transfermatch(ctx, account1, account2, days, include_bots):
     """Investigate the connection between two accounts
 
     """
@@ -46,12 +49,16 @@ def transfermatch(ctx, account1, account2, days):
 @click.option('--trx-type', '-t', type=click.Choice(['in', 'out', 'all']),
               default='all', help="Limit transaction type. Can be 'in', "
               "'out', or 'all' (default)")
+@click.option('--include-bots', '-i', default=False, is_flag=True,
+              help='Include transfers to/from known bidbots/services. '
+              'Default: false')
 @click.pass_context
-def transfers(ctx, account, days, trx_type):
+def transfers(ctx, account, days, trx_type, include_bots):
     """List transfers sent or received by ACCOUNT.
 
     """
     print(ct.transfers(account, days=days, trx_type=trx_type,
+                       include_bots=include_bots,
                        debug=ctx.obj['DEBUG']))
 
 

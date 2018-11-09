@@ -23,6 +23,7 @@ from beem.amount import Amount
 from beem.utils import parse_time, addTzInfo
 from datetime import datetime, timedelta
 from exchanges import EXCHANGES
+from bots import BOTS
 
 
 def datestr(date=None):
@@ -36,7 +37,8 @@ def datestr(date=None):
     return date.strftime("%y-%m-%d %H:%M:%S")
 
 
-def parse_transfer_history(account, days=0, debug=False):
+def parse_transfer_history(account, days=0, include_bots=False,
+                           debug=False):
     """parse the transfer history of an account
 
     :param str account: account to be parsed
@@ -62,19 +64,21 @@ def parse_transfer_history(account, days=0, debug=False):
         if days and parse_time(op['timestamp']) < stop_time:
             break
         if acc['name'] == op['from']:
-            if op['to'] not in EXCHANGES:
-                sent_to |= set([op['to']])
-            else:
+            if op['to'] in EXCHANGES:
                 exchange_memos |= set([op['memo']])
+            elif op['to'] not in BOTS or include_bots is True:
+                sent_to |= set([op['to']])
         if acc['name'] == op['to']:
-            if op['from'] in EXCHANGES:
+            if op['from'] in EXCHANGES or \
+               (op['from'] in BOTS and not include_bots):
                 continue
             received_from |= set([op['from']])
     return {'sent_to': sent_to, 'received_from': received_from,
             'exchange_memos': exchange_memos}
 
 
-def transfermatch(account1, account2, days=0, debug=False):
+def transfermatch(account1, account2, days=0, include_bots=False,
+                  debug=False):
     """Investigate the connection between two accounts based on their
     transfer history within the last [days] days.
 
@@ -87,14 +91,19 @@ def transfermatch(account1, account2, days=0, debug=False):
     :return multi-line string with the results
 
     """
-    hist1 = parse_transfer_history(account1, days=days, debug=debug)
-    hist2 = parse_transfer_history(account2, days=days, debug=debug)
+    hist1 = parse_transfer_history(account1, days=days,
+                                   include_bots=include_bots,
+                                   debug=debug)
+    hist2 = parse_transfer_history(account2, days=days,
+                                   include_bots=include_bots,
+                                   debug=debug)
     result = "Transfer analysis between %s and %s:" % (account1, account2)
     if account1 in hist2['sent_to']:
         result += "\n+ %s transferred funds to %s" % (account2, account1)
     if account2 in hist1['sent_to']:
         result += "\n+ %s transferred funds to %s" % (account1, account2)
-    if account1 not in hist2['sent_to'] and account2 not in hist1['sent_to']:
+    if account1 not in hist2['sent_to'] and \
+       account2 not in hist1['sent_to']:
         result += "\n- No transfers between them"
     receiver_overlap = hist1['sent_to'] & hist2['sent_to']
     if len(receiver_overlap):
@@ -117,7 +126,8 @@ def transfermatch(account1, account2, days=0, debug=False):
     return result
 
 
-def transfers(account, trx_type='all', days=0, debug=False):
+def transfers(account, trx_type='all', days=0, include_bots=False,
+              debug=False):
     """Find all transfers sent or received by [account] within the last
     [days] days.
 
@@ -145,6 +155,9 @@ def transfers(account, trx_type='all', days=0, debug=False):
             sys.stdout.write("%s\r" % (op['timestamp']))
         if days and parse_time(op['timestamp']) < stop_time:
             break
+        if include_bots is False and \
+           (op['from'] in BOTS or op['to'] in BOTS):
+            continue  # skip transfers from/to bots
         if op['to'] == acc['name'] and trx_type in ['in', 'all']:
             result += "\n%s: %s received %s from %s: %s" % \
                       (datestr(op['timestamp']), op['to'],
