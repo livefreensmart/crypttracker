@@ -3,187 +3,252 @@
 Created on Thu Sep 20 09:59:53 2018
 
 @author: lovenfreedom (Steemit username) livefreensmart (Github username)
+rewrite: crokkon (Steem & Github username)
 
 Goals for hackathon:
 1. provide account name and find transfers to exchanges
-  create a list of exchanges from penguinpablo's and lukestokes' list - done
-  calculating estimated block num by date is an option for longer date range
-    but for quick and dirty calculation of start block we'll use a dandy formula
+   create a list of exchanges from penguinpablo's and lukestokes' list - done
 2. provide account name and find transfers to other accounts
 3. provide account name and find who transferred to this account name
 4. provide wallet address and find other accounts using it
 
 Roadmap:
-Finish goals 3 and 4
-Consider SteemSQL
 Discord integration
 
 """
-
-import datetime
-import logging
-import requests
-from beem import Steem, blockchain
-from beem.instance import set_shared_steem_instance
-from beem.nodelist import NodeList
-from lxml import html
-
+import sys
+from beem.blockchain import Blockchain
+from beem.account import Account
+from beem.amount import Amount
+from beem.utils import parse_time, addTzInfo
+from datetime import datetime, timedelta
 from exchanges import EXCHANGES
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logging.basicConfig()
-
-# Retrieve nodes from list. Invoking update_nodes() ensures only active nodes are used to connect to.
-nodes = NodeList()
-nodes.update_nodes()
-
-# Create steem instance with functioning nodes. Enclose in try/except just in case.
-stm = Steem()
-try:
-    stm = Steem(node=nodes.get_nodes())
-except Exception as error:
-    logger.error(error)
-    logger.info(datetime.datetime.utcnow())
-    
-set_shared_steem_instance(stm)
-
-blockChain = blockchain.Blockchain() ## mode=head for instant confirmation, irreversible for confirmed txns
+from bots import BOTS
 
 
-def transfersAll(byAccount, hasMemo=True):
+def datestr(date=None):
+    """Convert timestamps to strings in a predefined format
+
     """
-    Get all transfers from Steemit account's transfer page
-    https://steemit.com/@username/transfers
+    if date is None:
+        date = datetime.utcnow()
+    if isinstance(date, str):
+        date = parse_time(date)
+    return date.strftime("%y-%m-%d %H:%M:%S")
 
-    :param str byAccount: Steemit account name to investigate
-    :param bool hasMemo: Default True means grab memo. False means grab the transaction only.
-    :return: List of all transfers visible on the account's page
-    :rtype list
+
+def parse_transfer_history(account, days=0, include_bots=False,
+                           debug=False):
+    """parse the transfer history of an account
+
+    :param str account: account to be parsed
+    :param float days: number of days to take into account. 0 uses all
+    available data (default)
+    :param bool debug: enable debug printout (disabled by default)
+
+    :return dict of sets with the list of receivers (`'sent_to'`),
+    senders (`'received_from'`) and exchange memos
+    (`'exchange_memos'`).
+
     """
-
-    transferPage = "https://steemit.com/@{}/transfers".format(byAccount)
-    page = requests.get(transferPage)
-    tree = html.fromstring(page.content)
-
-    ## Grab transfers only, ignore receive transactions
-    if hasMemo:
-        transfers = tree.xpath("//*[contains(text(),'Transfer')]/text()|//*[contains(text(),'Transfer')]/a/text()|//span[@class='Memo']/text()")
-    else:
-        transfers = tree.xpath("//*[contains(text(),'Transfer')]/text()|//*[contains(text(),'Transfer')]/a/text()")
-     
-    reformatTransfers = []
-    oneTransfer = ""
-
-    ## TODO: Find a more efficient way to group the xpath results.
-    for eachTransfer in transfers:
-        if "Transfer" in eachTransfer:
-            if oneTransfer:
-                reformatTransfers.append(oneTransfer)                     
-
-            oneTransfer = eachTransfer
-        else:
-            oneTransfer += " " + eachTransfer
-             
-    return reformatTransfers
-
-def transfersExchange(byAccount):
-    """
-    Retrieve all transfers to exchanges. Limited to transfers visible on account's transfer page.
-
-    :param str byAccount: Steemit account name to investigate
-    :return: List of all exchange transfers visible on the account's page
-    :rtype list
-    """
-    
-    allTransfers = transfersAll(byAccount)
-    transferList = []
-    
-    for eachTransfer in allTransfers:
-        if any(exch in eachTransfer for exch in EXCHANGES):
-            transferList.append(eachTransfer)
-            print(eachTransfer)
-    
-def transfersNonExchange(byAccount):
-    """
-    Retrieve all transfers to other accounts excluding exchanges. Limited to transfers visible on account's transfer page.
-
-    :param str byAccount: Steemit account name to investigate
-    :return: List of all non-exchange transfers visible on the account's page
-    :rtype list
-    """
-
-    allTransfers = transfersAll(byAccount, False)
-    transferList = []
-    
-    for eachTransfer in allTransfers:
-        if not any(exch in eachTransfer for exch in EXCHANGES):
-            transferList.append(eachTransfer)
-            print(eachTransfer)
-
-def streamTransfersOut(byAccount, lastDays=7):
-    """
-    Filter transfers to exchanges. Stream blockchain transactions starting from block N days prior to current block.
-    WARNING: May be slow unless you can afford SteemSQL subscription.
-
-    :param str byAccount: Steemit account name to investigate
-    :param float lastDays: How far back you want to stream the blockchain
-    :return: Merged list of transfer memos (usually wallet addresses) and other accounts using the same memo
-    :rtype list
-    """
-
-    memoList = []
-    accomplice = []
-    try:
-        currentBlock = blockChain.get_current_block_num()
-        for eachTxn in blockChain.stream(opNames=['transfer'],start=calcStartBlock(currentBlock, lastDays), stop=currentBlock):
-            if eachTxn['type'] != 'transfer':
+    sent_to = set()
+    received_from = set()
+    exchange_memos = set()
+    if debug:
+        print("Parsing account history of %s" % (account))
+    acc = Account(account)
+    stop_time = addTzInfo(datetime.utcnow()) - timedelta(days=days)
+    for op in acc.history_reverse(only_ops=['transfer']):
+        if debug:
+            sys.stdout.write("%s\r" % (op['timestamp']))
+        if days and parse_time(op['timestamp']) < stop_time:
+            break
+        if acc['name'] == op['from']:
+            if op['to'] in EXCHANGES:
+                exchange_memos |= set([op['memo']])
+            elif op['to'] not in BOTS or include_bots is True:
+                sent_to |= set([op['to']])
+        if acc['name'] == op['to']:
+            if op['from'] in EXCHANGES or \
+               (op['from'] in BOTS and not include_bots):
                 continue
-                
-            if eachTxn['to'] in EXCHANGES:
-                if memoList and eachTxn['memo'] in memoList and byAccount != eachTxn['from']:                    
-                    accomplice.append(eachTxn['from'])
-                    print(eachTxn['from'])
-                elif eachTxn['memo'] not in memoList and byAccount == eachTxn['from']:
-                    memoList.append(eachTxn['memo'])
-                    print(eachTxn['memo'])
+            received_from |= set([op['from']])
+    return {'sent_to': sent_to, 'received_from': received_from,
+            'exchange_memos': exchange_memos}
 
-    except Exception as error:
-        logger.info(" from transferOut()" + str(datetime.datetime.utcnow()))
-        logger.error(error)
 
-    return memoList + accomplice
-    
-def calcStartBlock(currentBlock, lastDays):
+def transfermatch(account1, account2, days=0, include_bots=False,
+                  debug=False):
+    """Investigate the connection between two accounts based on their
+    transfer history within the last [days] days.
+
+    :param str account1: first account name
+    :param str account2: second account name
+    :param float days: number of days to take into account. 0 uses all
+    available data (default)
+    :param bool debug: enable debug printout (disabled by default)
+
+    :return multi-line string with the results
+
     """
-    Calculate starting block to stream based on how many days far back is specified.
-      Formula:
-        1. days to seconds = 60secs x 60mins x 24hrs x lastDays
-        2. seconds to blocks = (days to seconds)/3 seconds
+    hist1 = parse_transfer_history(account1, days=days,
+                                   include_bots=include_bots,
+                                   debug=debug)
+    hist2 = parse_transfer_history(account2, days=days,
+                                   include_bots=include_bots,
+                                   debug=debug)
+    result = "Transfer analysis between %s and %s:" % (account1, account2)
+    if account1 in hist2['sent_to']:
+        result += "\n+ %s transferred funds to %s" % (account2, account1)
+    if account2 in hist1['sent_to']:
+        result += "\n+ %s transferred funds to %s" % (account1, account2)
+    if account1 not in hist2['sent_to'] and \
+       account2 not in hist1['sent_to']:
+        result += "\n- No transfers between them"
+    receiver_overlap = hist1['sent_to'] & hist2['sent_to']
+    if len(receiver_overlap):
+        result += "\n+ Both sent funds to %s" % \
+                  (", ".join(sorted(receiver_overlap)))
+    else:
+        result += "\n- No common fund receivers found"
+    sender_overlap = hist1['received_from'] & hist2['received_from']
+    if len(sender_overlap):
+        result += "\n+ Both received funds from %s" % \
+                  (", ".join(sorted(sender_overlap)))
+    else:
+        result += "\n- No common fund senders found"
+    memo_overlap = hist1['exchange_memos'] & hist2['exchange_memos']
+    if len(memo_overlap):
+        result += "\n+ Both transferred funds to exchanges using memos %s" % \
+                  (", ".join(sorted(memo_overlap)))
+    else:
+        result += "\n- No common exchange memos"
+    return result
 
-    Note: 1 block is generated every 3 seconds
 
-    Beem has blockchain.get_estimated_block_num that takes datetime parameter. But you need to use beem.utils to properly provide UTC datetime.
+def transfers(account, trx_type='all', days=0, include_bots=False,
+              debug=False):
+    """Find all transfers sent or received by [account] within the last
+    [days] days.
 
-    :param int currentBlock: Current block number
-    :param float lastDays: Allow less than 1 day for hours/minutes
-    :return: Calculated start block number
-    :rtype: int
+    :param str account: account to parse
+    :param str trx_type: transaction type to list. Valid types are
+    "in", "out" and "all".
+    :param float days: number of days to take into account. 0 uses all
+    available data (default)
+    :param bool debug: enable debug printout (disabled by default)
+
+    :return multi-line string with the results
+
     """
+    trx_types = ['in', 'out', 'all']
+    if trx_type not in trx_types:
+        raise ValueError("Invalid trx_type - allowed values: %s" %
+                         (trx_types))
+    acc = Account(account)
+    stop_time = addTzInfo(datetime.utcnow()) - timedelta(days=days)
+    receivers = set()
+    senders = set()
+    result = ""
+    for op in acc.history_reverse(only_ops=['transfer']):
+        if debug:
+            sys.stdout.write("%s\r" % (op['timestamp']))
+        if days and parse_time(op['timestamp']) < stop_time:
+            break
+        if include_bots is False and \
+           (op['from'] in BOTS or op['to'] in BOTS):
+            continue  # skip transfers from/to bots
+        if op['to'] == acc['name'] and trx_type in ['in', 'all']:
+            result += "\n%s: %s received %s from %s: %s" % \
+                      (datestr(op['timestamp']), op['to'],
+                       Amount(op['amount']), op['from'], op['memo'])
+            senders |= set([op['from']])
+        if op['from'] == acc['name'] and trx_type in ['out', 'all']:
+            result += "\n%s: %s sent %s to %s: %s" % \
+                      (datestr(op['timestamp']), op['from'],
+                       Amount(op['amount']), op['to'], op['memo'])
+            receivers |= set([op['to']])
+    if trx_type in ['in', 'all']:
+        result += "\n%s received funds from %d senders: %s" % \
+                  (account, len(senders), ", ".join(sorted(senders)))
+    if trx_type in ['out', 'all']:
+        result += "\n%s sent funds to %d receivers: %s" % \
+                  (account, len(receivers), ", ".join(sorted(receivers)))
+    if trx_type == 'all':
+        overlap = set(senders) & set(receivers)
+        result += "\n%s both sent to and received funds from %d accounts: " \
+                  "%s" % (account, len(overlap), ", ".join(sorted(overlap)))
+    return result[1:]
 
-    daysToBlocks = int(round((60*60*24*lastDays)/3))
-    ## Round result of division and convert to int.
-    ## Original type results in float. Stream requires int type for start and stop blocks.
 
-    return currentBlock-daysToBlocks
+def memomatch(exchange, memo, days=0, debug=False):
+    """Find all transfers to a given exchange that were done with the
+    provided memo within the last [days] days. The memo parameter may
+    be a substring of the actual transfer memo.
 
-def main():
-    try:
-        streamTransfersOut('reidlist', lastDays=0.08)
-    except Exception as error:
-        logger.info("from main")
-        logger.info(datetime.datetime.utcnow())
-        logger.error(error)
+    :param str exchange: exchange account to parse
+    :param str memo: memo or memo-substring to match
+    :param float days: number of days to take into account. 0 uses all
+    available data (default)
+    :param bool debug: enable debug printout (disabled by default)
 
-if __name__ == '__main__':
-    main()
+    :return multi-line string with the results
+
+    """
+    acc = Account(exchange)
+    stop_time = addTzInfo(datetime.utcnow()) - timedelta(days=days)
+    result = ""
+    for op in acc.history_reverse(only_ops=['transfer']):
+        if debug:
+            sys.stdout.write("%s\r" % (op['timestamp']))
+        if days and parse_time(op['timestamp']) < stop_time:
+            break
+        if memo not in op['memo']:
+            continue
+        result += "\n%s: %s transferred %s to %s: %s" % \
+                  (datestr(op['timestamp']), op['from'],
+                   Amount(op['amount']), op['to'], op['memo'])
+
+    return result[1:]
+
+
+def accountmatch(account, limit=10):
+    """Find account names similar to the provided string. [account] can be
+    an existing account of a partial name. Limit the output to [limit]
+    results.
+
+    :param str account: account to parse
+    :param int limit: maximum number of similar account names to return
+
+    :return list of account names
+    """
+    bc = Blockchain()
+    return [acc['name'] for acc in
+            bc.get_similar_account_names(account, limit=limit)]
+
+
+def exchangetransfers(account, days=0, debug=False):
+    """Find all outgoing transfers from a given account to any of the
+    exchanges within the last [days] days.
+
+    :param str account: account to parse
+    :param float days: number of days to take into account. 0 uses all
+    available data (default)
+    :param bool debug: enable debug printout (disabled by default)
+
+    :return multi-line string with the results
+    """
+    acc = Account(account)
+    stop_time = addTzInfo(datetime.utcnow()) - timedelta(days=days)
+    result = ""
+    for op in acc.history_reverse(only_ops=['transfer']):
+        if debug:
+            sys.stdout.write("%s\r" % (op['timestamp']))
+        if days and parse_time(op['timestamp']) < stop_time:
+            break
+        if op['to'] not in EXCHANGES:
+            continue
+        result += "\n%s: %s transferred %s to %s: %s" % \
+                  (datestr(op['timestamp']), op['from'],
+                   Amount(op['amount']), op['to'], op['memo'])
+    return result[1:]

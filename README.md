@@ -13,7 +13,31 @@ This tool will aid in pinpointing the main account the voting ring uses for with
 ## Python packages
 Once Python is installed, install the required packages in your virtual environment
 * [beem ](https://github.com/holgern/beem)
-* lxml
+
+## Usage
+`detective.py` is the CLI interface:
+
+```
+python detective.py --help
+Usage: detective.py [OPTIONS] COMMAND1 [ARGS]... [COMMAND2 [ARGS]...]...
+
+  crypttracker CLI app
+
+
+
+Options:
+  -v, --verbose  Enable verbose output
+  --help         Show this message and exit.
+
+Commands:
+  accountmatch       Find account names similar to the provided string.
+  exchangetransfers  Find all transfers to exchanges from a given account.
+  memomatch          Find exchange transfers matching a given memo.
+  transfermatch      Investigate the connection between two accounts
+  transfers          List transfers sent or received by ACCOUNT.
+```
+
+Use `python detective.py [COMMAND] --help` to get information on the individual commands.
 
 ## Roadmap
 * Discord integration or a website

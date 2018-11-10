@@ -3,13 +3,14 @@
 Created on Thu Sep 20 11:28:59 2018
 
 @author: lovenfreedom
-"""
 
+"""
 EXCHANGES = [
         'binance',
         'binance-hot',
         'bittrex',
         'blocktrades',
+        'changelly',
         'coinpayments.net',
         'deepcrypto8',
         'freewallet',
@@ -31,5 +32,5 @@ EXCHANGES = [
         'upbit',
         'upbit-exchange',
         'upbit-steemhot',
-        'upbituserwallet'        
+        'upbituserwallet',
         ]
